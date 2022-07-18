@@ -1,0 +1,134 @@
+#!/bin/sh
+# Provenir Startup Service script
+# acts as startup service script for Provenir.
+# USAGE: start|stop|status
+# chkconfig: 345 99 76
+# processname: prov7adm
+
+current_dir=`pwd`
+pid=`ps aux | grep "Dprovobj=prov7adm" | grep -v grep | awk '{print $2}'`
+
+export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/lib64:/lib/x86_64-linux-gnu:/opt/provenir70/pgsql/lib
+
+cd /opt/provenir70/bin
+counter=0
+
+start() {
+        if [ -z "$pid" ] && [ -z "`getadminloaderpids`" ]
+        then
+                echo "Starting Provenir Admin Server"
+                su provenir -s /bin/bash -c "./as.sh prov7adm" >> /var/log/provenir/adminserverd.log 2>&1 &
+                counter=0
+                while [ $counter -lt 15 ]
+                do
+                        sleep 1
+                        pid=`ps aux | grep "Dprovobj=prov7adm" | grep -v grep | awk '{print $2}'`
+                        if [ -z "$pid" ]
+                        then
+                                echo -e "\nProvenir Admin Server could not be started successfully"
+                                counter=20
+                        else
+                                printf .
+                        fi
+                        counter=`expr $counter + 1`
+                done
+
+                if [ $counter -lt 20 ]
+                then
+                        echo -e "\nAdmin Server started successfully with pid: $pid"
+                fi
+        else
+                echo "Provenir Admin Server is already running: $pid, `getadminloaderpids`"
+        fi
+}
+
+waitforstop() {
+        counter=0
+        while [ $counter -lt 30 ]
+        do
+                sleep 2
+                pid=`ps aux | grep "Dprovobj=prov7adm" | grep -v grep | awk '{print $2}'`
+                if [ -z "$pid" ]
+                then
+                        if [ -z "`getadminloaderpids`" ]
+                        then
+                                echo "Provenir Admin Server Stopped successfully"
+                                counter=100
+                        else
+
+                                echo "Provenir Admin Server stopped, but some AdminLoader processes are still running..."
+                                counter=99
+                        fi
+                else
+                        printf .
+                fi
+                counter=`expr $counter + 1`
+        done
+
+}
+
+#
+# DEs may still be running (abnormally) even though the AS has stopped
+#
+getadminloaderpids() {
+        pgrep -f ' com.provenir.loader.AdminLoader '
+}
+
+stop() {
+        if [ -z "`getadminloaderpids`" ]
+        then
+                echo Provenir Admin Server is not running
+        else
+                echo "Stopping Provenir Admin Server"
+                su provenir -s /bin/bash -c ./adminsrvstop.sh >> /var/log/provenir/adminserverd.log 2>&1 &
+                waitforstop
+
+                if [ $counter -lt 100 ] || [ -n "`getadminloaderpids`" ]
+                then
+                        echo -e "Could not stop Provenir Admin Server normally. Killing all AdminLoader processes."
+                        # Killing only the parent may leave unresponse children running,
+                        # so kill all processes containing AdminLoader
+                        pkill -9 -f ' com.provenir.loader.AdminLoader '
+                        waitforstop
+                fi
+        fi
+}
+
+restart() {
+    stop
+    start
+}
+
+status() {
+        # Check to see if the process is running
+        if [ -z "`getadminloaderpids`" ]
+        then
+            echo "Provenir Admin Server is not running"
+            exit 3
+        else
+            echo "Provenir Admin Server is running: $pid"
+        fi
+}
+
+case "$1" in
+    start)
+        start
+        ;;
+    stop)
+        stop
+        ;;
+    status)
+        status
+        ;;
+    restart)
+        restart
+        ;;
+    *)
+        echo "Provenir Admin Server Service"
+        echo "Usage: $0 {start|stop|status|restart}"
+        exit 1
+        ;;
+
+esac
+cd $current_dir
+exit 0
